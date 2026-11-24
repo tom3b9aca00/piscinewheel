@@ -1,0 +1,26 @@
+# Configuration Render (https://render.com) — « New + → Blueprint » et choisis ce dépôt GitHub.
+services:
+  - type: web
+    name: roue-coalition
+    runtime: node
+    plan: free
+    buildCommand: echo "aucune dépendance à installer"
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: AUTH_PROVIDER
+        value: simple
+      - key: COOKIE_SECURE
+        value: "1"
+      # Clé des cookies de session, générée une fois par Render (sinon tout le monde est déconnecté à chaque redémarrage)
+      - key: SESSION_SECRET
+        generateValue: true
+      # Scores permanents : crée une base gratuite sur https://upstash.com (Redis) et colle ici
+      # son « REST URL » et son « REST Token » (dans le tableau de bord Render, onglet Environment).
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false

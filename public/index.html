@@ -23,6 +23,10 @@
     display: flex; flex-direction: column; align-items: center; padding: 24px 16px 48px;
   }
   h1 { margin: 0 0 4px; font-size: 1.8rem; }
+  .userbar { display: flex; align-items: center; gap: 8px; align-self: flex-end; font-size: .9rem; color: var(--muted); margin-bottom: 8px; }
+  .userbar img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+  .userbar a { color: var(--muted); }
+  .history li .by { color: var(--muted); font-size: .85rem; }
   .sub { color: var(--muted); margin: 0 0 20px; text-align: center; }
 
   .scores { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; width: min(560px, 100%); margin-bottom: 18px; }
@@ -73,6 +77,7 @@
 </style>
 </head>
 <body>
+<div class="userbar" id="userbar"></div>
 <h1>🎡 Roue des Coalitions</h1>
 <p class="sub">Tourne la roue : points pour (ou contre) une coalition… ou un TIG.</p>
 
@@ -88,7 +93,7 @@
 
 <div class="controls">
   <button id="spin">Tourner !</button>
-  <button id="reset" class="secondary">Remettre les scores à zéro</button>
+  <button id="reset" class="secondary" hidden>Remettre les scores à zéro</button>
 </div>
 
 <div class="result" id="result"><p>Clique sur « Tourner ! » (ou Espace).</p></div>
@@ -98,6 +103,7 @@
   <ol id="history"></ol>
 </div>
 
+<script src="/config.js"></script>
 <script>
 // ===== Config : modifie ici les noms, couleurs et cases =====
 // Chaque coalition est représentée par un dinosaure (le nom sert seulement de texte alternatif).
@@ -120,21 +126,17 @@ function dinoImg(k, _unused, size) {
 const TIG_COLORS = ["#222222", "#222222"];
 const C42_COLOR = "#ffffff";
 const DARK_TEXT = new Set(["#ffffff"]);   // couleurs claires -> texte noir
-const TIG_CHANCE = 0.10;      // probabilité totale de tomber sur un TIG (1 sur 10)
-const COOLDOWN_S = 30;        // secondes d'attente entre deux tirages
-const COA_REPEAT = 2;         // chaque case coalition (-50..+50) est présente 2 fois
+// Règles (probabilités, nombre de cases, attente) : voir config.js, partagé avec le serveur.
+const TIG_CHANCE = WHEEL_RULES.tigChance;
 
-// Construction de la roue : 30 cases coalition (3 coalitions × 5 valeurs × 2),
-// 4 cases TIG, 1 case « 42 » (visible mais jamais tirée). L'ordre est mélangé plus bas.
-const VALUE_ORDERS = [[50, -25, 0, -50, 25], [-50, 25, 50, 0, -25], [0, -50, 25, 50, -25]];
+// Construction de la roue : cases coalition (coalitions × valeurs × repeat),
+// cases TIG, 1 case « 42 » (visible mais jamais tirée). L'ordre est mélangé plus bas.
 const SEGMENTS = (() => {
   const coa = [];
-  for (let r = 0; r < COA_REPEAT; r++) {
-    for (let k = 0; k < 5; k++) {
-      COAL_KEYS.forEach((key, j) => coa.push({ coal: key, pts: VALUE_ORDERS[(r + j) % VALUE_ORDERS.length][k] }));
-    }
-  }
-  const out = [{ c42: true }, ...coa, { tig: 1 }, { tig: 1 }, { tig: 1 }, { tig: 1 }];
+  for (let r = 0; r < WHEEL_RULES.repeat; r++)
+    for (const pts of WHEEL_RULES.values)
+      for (const key of COAL_KEYS) coa.push({ coal: key, pts });
+  const out = [{ c42: true }, ...coa, ...Array.from({ length: WHEEL_RULES.tigCount }, () => ({ tig: 1 }))];
   // Poids (probabilité) : les TIG se partagent TIG_CHANCE, les cases coalition le reste,
   // la case 42 a un poids nul. Taille affichée = poids, sauf la 42 qui est affichée
   // comme 2 cases (elle remplit le quart de roue où il manque 2 cases coalition).
@@ -211,12 +213,13 @@ COAL_KEYS.forEach(k => {
   scoreEls[k] = val;
 });
 
-const STORE_KEY = "roue-coalition-v2";
-try { localStorage.removeItem("roue-coalition-v1"); } catch (e) {}
-const emptyState = () => ({ ...Object.fromEntries(COAL_KEYS.map(k => [k, 0])), tig: 0, history: [] });
-let state = emptyState();
-try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); if (s) state = { ...state, ...s }; } catch (e) {}
-function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
+// État partagé : vient du serveur (scores de tout le monde + historique).
+let state = { scores: Object.fromEntries([...COAL_KEYS, "tig"].map(k => [k, 0])), history: [] };
+async function api(path, method = "GET") {
+  const res = await fetch(path, { method, headers: { "X-Roue": "1" }, credentials: "same-origin" });
+  if (res.status === 401) { location.href = "/"; throw new Error("non connecté"); }
+  return { status: res.status, data: await res.json() };
+}
 
 let angle = 0;
 shuffleSegments();
@@ -283,10 +286,11 @@ function draw() {
 
 function renderScores(bumpKey) {
   for (const k of COAL_KEYS) {
-    scoreEls[k].textContent = state[k];
-    scoreEls[k].className = "val " + (state[k] > 0 ? "pos" : state[k] < 0 ? "neg" : "");
+    const v = state.scores[k] ?? 0;
+    scoreEls[k].textContent = v;
+    scoreEls[k].className = "val " + (v > 0 ? "pos" : v < 0 ? "neg" : "");
   }
-  scoreEls.tig.textContent = state.tig;
+  scoreEls.tig.textContent = state.scores.tig ?? 0;
   if (bumpKey) {
     const el = scoreEls[bumpKey];
     el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
@@ -302,8 +306,13 @@ function renderHistory() {
     if (h.coal && COALS[h.coal]) span.append(`${fmt(h.pts)} points pour `, dinoImg(h.coal, null, "1.4rem"));
     else span.textContent = h.c42 ? "★ 42 ★" : h.tig ? `🧹 ${h.tig} TIG` : "?";
     const t = document.createElement("time");
+    const by = document.createElement("span");
+    by.className = "by";
+    by.textContent = h.login ? `${h.login} · ` : "";
     t.textContent = new Date(h.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-    li.append(span, t);
+    const right = document.createElement("span");
+    right.append(by, t);
+    li.append(span, right);
     historyEl.appendChild(li);
   });
 }
@@ -329,50 +338,41 @@ function showResult(s) {
   resultEl.append(big, who);
 }
 
-function apply(s) {
-  let key;
-  if (s.c42) { /* case spéciale : pas d'effet sur les scores */ }
-  else if (s.tig) { state.tig += s.tig; key = "tig"; }
-  else { state[s.coal] += s.pts; key = s.coal; }
-  const { c42, tig, coal, pts } = s;
-  state.history.unshift({ c42, tig, coal, pts, at: Date.now() });
-  state.history = state.history.slice(0, 50);
-  save();
-  renderScores(key);
-  renderHistory();
-}
-
-// ===== Attente de 30 s entre deux tirages (gardée même si on recharge la page) =====
-const CD_KEY = "roue-coalition-next-spin";
+// ===== Attente entre deux tirages : décidée par le serveur =====
 let nextSpinAt = 0, cdTimer = null;
-try { nextSpinAt = Number(localStorage.getItem(CD_KEY)) || 0; } catch (e) {}
-function startCooldown() {
-  nextSpinAt = Date.now() + COOLDOWN_S * 1000;
-  try { localStorage.setItem(CD_KEY, String(nextSpinAt)); } catch (e) {}
-  tickCooldown();
-}
+function setWait(ms) { nextSpinAt = Date.now() + ms; tickCooldown(); }
 function tickCooldown() {
   clearTimeout(cdTimer);
   const left = Math.ceil((nextSpinAt - Date.now()) / 1000);
-  if (left > 0 && left <= COOLDOWN_S) {
+  if (spinning) return;
+  if (left > 0) {
     spinBtn.disabled = true;
     spinBtn.textContent = `⏳ ${left} s`;
     cdTimer = setTimeout(tickCooldown, 250);
   } else {
-    spinBtn.disabled = spinning;
+    spinBtn.disabled = false;
     spinBtn.textContent = "Tourner !";
   }
 }
 
-function spin() {
+async function spin() {
   if (spinning || Date.now() < nextSpinAt) return;
   spinning = true;
   spinBtn.disabled = resetBtn.disabled = true;
 
-  // Tirage pondéré (TIG = TIG_CHANCE au total), la taille des cases suit les poids.
-  let x = Math.random(), winner = SEGMENTS.length - 1;
-  for (let i = 0; i < SEGMENTS.length; i++) { if (SEGMENTS[i].w > 0 && (x -= SEGMENTS[i].w) < 0) { winner = i; break; } }
+  // Le serveur fait le tirage ; la roue s'arrête sur une case correspondante.
+  let resp;
+  try { resp = await api("/api/spin", "POST"); } catch (e) { spinning = false; resetBtn.disabled = false; tickCooldown(); return; }
+  if (resp.status !== 200) {
+    spinning = false; resetBtn.disabled = false;
+    if (resp.data.waitMs) setWait(resp.data.waitMs); else tickCooldown();
+    return;
+  }
+  const res = resp.data.result;
+  const matches = SEGMENTS.map((s, i) => i).filter(i => res.tig ? SEGMENTS[i].tig : SEGMENTS[i].coal === res.coal && SEGMENTS[i].pts === res.pts);
+  const winner = matches[Math.floor(Math.random() * matches.length)];
   const w = SEGMENTS[winner], seg = w.a1 - w.a0;
+  nextSpinAt = Date.now() + resp.data.waitMs;
   // Le pointeur est à droite (angle 0) : on amène le segment gagnant dessus.
   const jitter = (Math.random() - 0.5) * seg * 0.85;   // peut s'arrêter tout près du bord
   const target = -(w.a0 + seg / 2) + jitter;
@@ -409,17 +409,19 @@ function spin() {
     draw();
     spinning = false;
     resetBtn.disabled = false;
-    startCooldown();
+    tickCooldown();
     showResult(SEGMENTS[winner]);
     confettiBurst();
-    apply(SEGMENTS[winner]);
+    state = { scores: resp.data.scores, history: resp.data.history };
+    renderScores(res.tig ? "tig" : res.coal);
+    renderHistory();
   }
   requestAnimationFrame(frame);
 }
 
 // Reset en deux clics (pas de confirm() bloquant)
 let resetArmed = null;
-resetBtn.addEventListener("click", () => {
+resetBtn.addEventListener("click", async () => {
   if (spinning) return;
   if (!resetArmed) {
     resetBtn.textContent = "Sûr ? Clique encore";
@@ -428,8 +430,9 @@ resetBtn.addEventListener("click", () => {
   }
   clearTimeout(resetArmed); resetArmed = null;
   resetBtn.textContent = "Remettre les scores à zéro";
-  state = emptyState();
-  save();
+  const { status, data } = await api("/api/reset", "POST");
+  if (status !== 200) return;
+  state = data;
   renderScores();
   renderHistory();
   resultEl.innerHTML = "<p>Scores remis à zéro. Clique sur « Tourner ! » (ou Espace).</p>";
@@ -479,10 +482,29 @@ function confettiFrame() {
   else { cfRunning = false; cfx.clearRect(0, 0, innerWidth, innerHeight); }
 }
 
+// ===== Démarrage + rafraîchissement des scores partagés toutes les 5 s =====
+async function refresh(first) {
+  if (spinning) return;
+  const { data } = await api("/api/state");
+  if (spinning) return;
+  state = { scores: data.scores, history: data.history };
+  renderScores();
+  renderHistory();
+  if (first) {
+    setWait(data.waitMs);
+    resetBtn.hidden = !data.me.admin;
+    const bar = document.getElementById("userbar");
+    if (data.me.img) { const im = document.createElement("img"); im.src = data.me.img; im.alt = ""; bar.append(im); }
+    const name = document.createElement("b"); name.textContent = data.me.login;
+    const out = document.createElement("a"); out.href = "/logout"; out.textContent = "Déconnexion";
+    bar.append(name, "·", out);
+  }
+}
 renderScores();
 renderHistory();
 draw();
-tickCooldown();
+refresh(true);
+setInterval(() => refresh(false).catch(() => {}), 5000);
 </script>
 </body>
 </html>

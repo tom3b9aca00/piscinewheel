@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roue des Coalitions — Connexion</title>
+<style>
+  :root { --bg: #f6f5f1; --fg: #1c1c1c; --muted: #6b6b6b; --card: #fff; --border: #e2e0d8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141414; --fg: #ececec; --muted: #9a9a9a; --card: #1e1e1e; --border: #333; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+         background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 36px 32px; text-align: center; max-width: 420px; width: 100%; }
+  h1 { margin: 0 0 6px; font-size: 1.7rem; }
+  p { color: var(--muted); margin: 0 0 24px; }
+  .msg { color: #d63a3a; margin: 0 0 20px; }
+  .msg:empty { display: none; }
+  a.btn { display: inline-flex; align-items: center; gap: 10px; background: #1c1c1c; color: #fff; text-decoration: none;
+          font-weight: 700; padding: 14px 26px; border-radius: 10px; font-size: 1.05rem; }
+  a.btn .logo { background: #fff; color: #1c1c1c; border-radius: 6px; padding: 2px 6px; font-size: .9rem; }
+  form { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  input { font: inherit; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); flex: 1; min-width: 0; }
+  form button { font: inherit; font-weight: 700; padding: 12px 22px; border-radius: 10px; border: none; background: #00babc; color: #fff; cursor: pointer; }
+  @media (prefers-color-scheme: dark) { a.btn { background: #ececec; color: #1c1c1c; } a.btn .logo { background: #1c1c1c; color: #fff; } }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🎡 Roue des Coalitions</h1>
+  <p>Entre ton login pour tourner la roue.</p>
+  <div class="msg"><!--MSG--></div>
+  <!--LOGIN-->
+</div>
+</body>
+</html>
