@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roue Coalition</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --fg: #1c1c1c; --muted: #6b6b6b; --card: #ffffff;
+    --border: #e2e0d8; --accent: #00babc;
+    --tig: #2c2c2c;
+    --pos: #1e9e57; --neg: #d63a3a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141414; --fg: #ececec; --muted: #9a9a9a; --card: #1e1e1e; --border: #333; --tig: #555;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; padding: 24px 16px 48px;
+  }
+  h1 { margin: 0 0 4px; font-size: 1.8rem; }
+  .sub { color: var(--muted); margin: 0 0 20px; text-align: center; }
+
+  .scores { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; width: min(560px, 100%); margin-bottom: 18px; }
+  @media (max-width: 480px) { .scores { grid-template-columns: repeat(2, 1fr); } }
+  .score {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px; text-align: center; border-top: 5px solid var(--col);
+  }
+  .score .label { font-size: .85rem; color: var(--muted); font-weight: 600; min-height: 3rem; display: flex; align-items: center; justify-content: center; gap: 4px; }
+  .score .val { font-size: 1.8rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .score .val.bump { animation: bump .5s ease; }
+  @keyframes bump { 40% { transform: scale(1.25); } }
+
+  .wheel-wrap { position: relative; width: min(860px, 100%, 92vh); aspect-ratio: 1; }
+  .wheel-wrap canvas { width: 100%; height: 100%; display: block; }
+  #confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 10; }
+  .pointer {
+    position: absolute; top: 50%; right: -6px; transform: translateY(-50%);
+    width: 0; height: 0; border-top: 22px solid transparent; border-bottom: 22px solid transparent;
+    border-right: 42px solid var(--fg); filter: drop-shadow(0 1px 2px rgba(0,0,0,.3));
+  }
+  .controls { display: flex; gap: 10px; margin: 20px 0; flex-wrap: wrap; justify-content: center; }
+  button {
+    font: inherit; font-weight: 600; padding: 12px 28px; border-radius: 10px; border: none;
+    background: var(--accent); color: #fff; cursor: pointer; font-size: 1.05rem;
+  }
+  button.secondary { background: var(--card); color: var(--fg); border: 1px solid var(--border); font-size: .95rem; padding: 10px 18px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  .result {
+    width: min(560px, 100%); background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; min-height: 90px; text-align: center;
+  }
+  .result .big { font-size: 2rem; font-weight: 800; }
+  .result .who { font-size: 1.1rem; font-weight: 700; margin-top: 4px; }
+  .result p { margin: 8px 0 0; color: var(--muted); }
+  img.dino { width: auto; vertical-align: middle; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); }
+
+  .history { width: min(560px, 100%); margin-top: 16px; }
+  .history h2 { font-size: 1rem; color: var(--muted); margin: 0 0 8px; }
+  .history ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .history li {
+    background: var(--card); border: 1px solid var(--border); border-left: 5px solid var(--col);
+    border-radius: 8px; padding: 6px 10px; display: flex; justify-content: space-between; font-size: .9rem;
+  }
+  .history li time { color: var(--muted); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<h1>🎡 Roue des Coalitions</h1>
+<p class="sub">Tourne la roue : points pour (ou contre) une coalition… ou un TIG.</p>
+
+<div class="scores" id="scores">
+  <div class="score" style="--col:var(--tig)"><div class="label">🧹 TIG</div><div class="val" id="scoreTig">0</div></div>
+</div>
+
+<div class="wheel-wrap">
+  <canvas id="wheel" width="1720" height="1720"></canvas>
+  <div class="pointer"></div>
+</div>
+<canvas id="confetti"></canvas>
+
+<div class="controls">
+  <button id="spin">Tourner !</button>
+  <button id="shuffle" class="secondary">🔀 Mélanger</button>
+  <button id="reset" class="secondary">Remettre les scores à zéro</button>
+</div>
+
+<div class="result" id="result"><p>Clique sur « Tourner ! » (ou Espace).</p></div>
+
+<div class="history">
+  <h2>Historique</h2>
+  <ol id="history"></ol>
+</div>
+
+<script>
+// ===== Config : modifie ici les noms, couleurs et cases =====
+// Chaque coalition est représentée par un dinosaure (le nom sert seulement de texte alternatif).
+// "svg" = dessin du dinosaure. Pour mettre ta propre image : ajoute  img: "mon-image.png".
+const COALS = {
+  a: { name: "Les Fada",   color: "#2e9e44", svg: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 120 100\"><path d=\"M44,58 Q24,62 6,78 Q30,76 48,72 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"44\" y=\"64\" width=\"12\" height=\"24\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><ellipse cx=\"56\" cy=\"60\" rx=\"22\" ry=\"17\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M60,46 Q66,30 76,26 L84,40 Q76,48 72,58 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"58\" y=\"64\" width=\"13\" height=\"24\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M66,22 Q70,10 88,12 Q108,14 110,24 Q111,32 102,34 L84,36 Q70,38 66,30 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M76,36 L104,35 Q106,41 98,43 L80,44 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><ellipse cx=\"56\" cy=\"66\" rx=\"14\" ry=\"9\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M44,58 Q24,62 6,78 Q30,76 48,72 Z\" fill=\"#4cc25e\"/><rect x=\"44\" y=\"64\" width=\"12\" height=\"24\" rx=\"5\" fill=\"#2a8a3a\"/><ellipse cx=\"56\" cy=\"60\" rx=\"22\" ry=\"17\" fill=\"#4cc25e\"/><path d=\"M60,46 Q66,30 76,26 L84,40 Q76,48 72,58 Z\" fill=\"#4cc25e\"/><rect x=\"58\" y=\"64\" width=\"13\" height=\"24\" rx=\"5\" fill=\"#4cc25e\"/><path d=\"M66,22 Q70,10 88,12 Q108,14 110,24 Q111,32 102,34 L84,36 Q70,38 66,30 Z\" fill=\"#4cc25e\"/><path d=\"M76,36 L104,35 Q106,41 98,43 L80,44 Z\" fill=\"#bff0c4\"/><ellipse cx=\"56\" cy=\"66\" rx=\"14\" ry=\"9\" fill=\"#bff0c4\"/><circle cx=\"86\" cy=\"20\" r=\"4.2\" fill=\"#fff\" stroke=\"#1c1c1c\" stroke-width=\"1.5\"/><circle cx=\"87\" cy=\"20\" r=\"2.3100000000000005\" fill=\"#1c1c1c\"/><circle cx=\"87.8\" cy=\"19\" r=\"0.8400000000000001\" fill=\"#fff\"/><path d=\"M80,30 Q92,32 104,30\" fill=\"none\" stroke=\"#1c1c1c\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><path d=\"M84,35 l2,3 l2,-3 M92,35 l2,3 l2,-3\" fill=\"#fff\" stroke=\"#1c1c1c\" stroke-width=\"1\"/><path d=\"M73,57 Q80,57 82,63\" fill=\"none\" stroke=\"#1c1c1c\" stroke-width=\"6\" stroke-linecap=\"round\"/><path d=\"M73,57 Q80,57 82,63\" fill=\"none\" stroke=\"#4cc25e\" stroke-width=\"3\" stroke-linecap=\"round\"/><circle cx=\"50\" cy=\"50\" r=\"3\" fill=\"#2a8a3a\"/><circle cx=\"60\" cy=\"46\" r=\"2.4\" fill=\"#2a8a3a\"/><circle cx=\"40\" cy=\"60\" r=\"2.2\" fill=\"#2a8a3a\"/></svg>" },  // vert  – T-rex
+  b: { name: "Les Frate",  color: "#1e6fd9", svg: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 120 100\"><path d=\"M30,58 Q16,62 4,72 Q22,74 34,70 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"30\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"64\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><ellipse cx=\"52\" cy=\"58\" rx=\"28\" ry=\"19\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M72,46 Q70,22 84,14 Q96,16 98,34 Q92,48 80,58 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M80,40 Q98,34 108,46 Q112,56 104,60 Q90,64 80,58 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"40\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"72\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M108,50 L118,52 L108,56 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M90,40 L104,24 L96,42 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M104,44 L110,36 L108,47 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M30,58 Q16,62 4,72 Q22,74 34,70 Z\" fill=\"#4a90f0\"/><rect x=\"30\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#1f5fbf\"/><rect x=\"64\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#1f5fbf\"/><ellipse cx=\"52\" cy=\"58\" rx=\"28\" ry=\"19\" fill=\"#4a90f0\"/><path d=\"M72,46 Q70,22 84,14 Q96,16 98,34 Q92,48 80,58 Z\" fill=\"#c4dcff\"/><path d=\"M80,40 Q98,34 108,46 Q112,56 104,60 Q90,64 80,58 Z\" fill=\"#4a90f0\"/><rect x=\"40\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#4a90f0\"/><rect x=\"72\" y=\"66\" width=\"12\" height=\"22\" rx=\"5\" fill=\"#4a90f0\"/><path d=\"M108,50 L118,52 L108,56 Z\" fill=\"#c4dcff\"/><path d=\"M90,40 L104,24 L96,42 Z\" fill=\"#c4dcff\"/><path d=\"M104,44 L110,36 L108,47 Z\" fill=\"#c4dcff\"/><circle cx=\"94\" cy=\"47\" r=\"4.2\" fill=\"#fff\" stroke=\"#1c1c1c\" stroke-width=\"1.5\"/><circle cx=\"95\" cy=\"47\" r=\"2.3100000000000005\" fill=\"#1c1c1c\"/><circle cx=\"95.8\" cy=\"46\" r=\"0.8400000000000001\" fill=\"#fff\"/><circle cx=\"80\" cy=\"20\" r=\"2.6\" fill=\"#1f5fbf\"/><circle cx=\"90\" cy=\"22\" r=\"2.6\" fill=\"#1f5fbf\"/><circle cx=\"76\" cy=\"30\" r=\"2.6\" fill=\"#1f5fbf\"/><path d=\"M100,56 Q104,58 108,55\" fill=\"none\" stroke=\"#1c1c1c\" stroke-width=\"1.6\" stroke-linecap=\"round\"/><circle cx=\"44\" cy=\"50\" r=\"3\" fill=\"#1f5fbf\"/><circle cx=\"56\" cy=\"46\" r=\"2.4\" fill=\"#1f5fbf\"/><circle cx=\"34\" cy=\"56\" r=\"2\" fill=\"#1f5fbf\"/></svg>" },  // bleu  – tricératops
+  c: { name: "Les Minots", color: "#e03131", svg: "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 120 100\"><path d=\"M23,56 L30,34 L37,56 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M35,48 L42,23 L49,48 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M49,44 L56,18 L63,44 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M63,48 L70,24 L77,48 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M74,56 L81,35 L88,56 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M10,58 L4,50 L12,56 L8,46 L18,56 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M34,56 Q18,58 6,62 Q20,70 36,68 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"34\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"66\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><ellipse cx=\"56\" cy=\"56\" rx=\"28\" ry=\"17\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M78,56 Q92,58 98,60 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M76,52 Q90,52 98,56 L100,66 Q88,68 78,66 Z\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><ellipse cx=\"104\" cy=\"62\" rx=\"12\" ry=\"8\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"44\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><rect x=\"74\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><ellipse cx=\"56\" cy=\"64\" rx=\"18\" ry=\"7\" fill=\"#1c1c1c\" stroke=\"#1c1c1c\" stroke-width=\"7\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/><path d=\"M23,56 L30,34 L37,56 Z\" fill=\"#ffd0c4\"/><path d=\"M35,48 L42,23 L49,48 Z\" fill=\"#ffd0c4\"/><path d=\"M49,44 L56,18 L63,44 Z\" fill=\"#ffd0c4\"/><path d=\"M63,48 L70,24 L77,48 Z\" fill=\"#ffd0c4\"/><path d=\"M74,56 L81,35 L88,56 Z\" fill=\"#ffd0c4\"/><path d=\"M10,58 L4,50 L12,56 L8,46 L18,56 Z\" fill=\"#ffd0c4\"/><path d=\"M34,56 Q18,58 6,62 Q20,70 36,68 Z\" fill=\"#f05252\"/><rect x=\"34\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#b82727\"/><rect x=\"66\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#b82727\"/><ellipse cx=\"56\" cy=\"56\" rx=\"28\" ry=\"17\" fill=\"#f05252\"/><path d=\"M78,56 Q92,58 98,60 Z\" fill=\"#f05252\"/><path d=\"M76,52 Q90,52 98,56 L100,66 Q88,68 78,66 Z\" fill=\"#f05252\"/><ellipse cx=\"104\" cy=\"62\" rx=\"12\" ry=\"8\" fill=\"#f05252\"/><rect x=\"44\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#f05252\"/><rect x=\"74\" y=\"64\" width=\"11\" height=\"24\" rx=\"5\" fill=\"#f05252\"/><ellipse cx=\"56\" cy=\"64\" rx=\"18\" ry=\"7\" fill=\"#ffd0c4\"/><circle cx=\"105\" cy=\"59\" r=\"3.4\" fill=\"#fff\" stroke=\"#1c1c1c\" stroke-width=\"1.5\"/><circle cx=\"106\" cy=\"59\" r=\"1.87\" fill=\"#1c1c1c\"/><circle cx=\"106.8\" cy=\"58\" r=\"0.68\" fill=\"#fff\"/><path d=\"M106,66 Q110,67 114,64\" fill=\"none\" stroke=\"#1c1c1c\" stroke-width=\"1.5\" stroke-linecap=\"round\"/><circle cx=\"48\" cy=\"50\" r=\"2.6\" fill=\"#b82727\"/><circle cx=\"62\" cy=\"48\" r=\"2.2\" fill=\"#b82727\"/><circle cx=\"70\" cy=\"54\" r=\"2\" fill=\"#b82727\"/></svg>" },  // rouge – stégosaure
+};
+const COAL_KEYS = Object.keys(COALS);
+const dinoSrc = k => COALS[k].img || "data:image/svg+xml," + encodeURIComponent(COALS[k].svg);
+function dinoImg(k, _unused, size) {
+  const im = document.createElement("img");
+  im.src = dinoSrc(k);
+  im.alt = im.title = COALS[k].name;
+  im.className = "dino";
+  im.style.height = size;
+  return im;
+}
+const TIG_COLORS = ["#222222", "#222222"];
+const C42_COLOR = "#ffffff";
+const DARK_TEXT = new Set(["#ffffff"]);   // couleurs claires -> texte noir
+const TIG_CHANCE = 0.10;      // probabilité totale de tomber sur un TIG (1 sur 10)
+const COA_REPEAT = 2;         // chaque case coalition (-50..+50) est présente 2 fois
+
+// Construction de la roue : 30 cases coalition (3 coalitions × 5 valeurs × 2),
+// 4 cases TIG, 1 case « 42 » (visible mais jamais tirée). L'ordre est mélangé plus bas.
+const VALUE_ORDERS = [[50, -25, 0, -50, 25], [-50, 25, 50, 0, -25], [0, -50, 25, 50, -25]];
+const SEGMENTS = (() => {
+  const coa = [];
+  for (let r = 0; r < COA_REPEAT; r++) {
+    for (let k = 0; k < 5; k++) {
+      COAL_KEYS.forEach((key, j) => coa.push({ coal: key, pts: VALUE_ORDERS[(r + j) % VALUE_ORDERS.length][k] }));
+    }
+  }
+  const out = [{ c42: true }, ...coa, { tig: 1 }, { tig: 1 }, { tig: 1 }, { tig: 1 }];
+  // Poids (probabilité) : les TIG se partagent TIG_CHANCE, les cases coalition le reste,
+  // la case 42 a un poids nul. Taille affichée = poids, sauf la 42 qui est affichée
+  // comme 2 cases (elle remplit le quart de roue où il manque 2 cases coalition).
+  const nT = out.filter(s => s.tig).length, nC = out.filter(s => s.coal).length;
+  out.forEach(s => s.w = s.c42 ? 0 : s.tig ? TIG_CHANCE / nT : (1 - TIG_CHANCE) / nC);
+  out.forEach(s => s.size = s.c42 ? 2 * (1 - TIG_CHANCE) / nC : s.w);
+  return out;
+})();
+
+// Mélange (à chaque chargement et avec le bouton « Mélanger ») :
+//  - les 4 TIG sont placées comme une boussole (N, E, S, O), à 90° l'une de l'autre ;
+//  - entre elles, les cases coalition sont mélangées au hasard, sans jamais mettre
+//    côte à côte deux cases de la même coalition ni deux cases de la même valeur.
+const clash = (x, y) => x.coal && y.coal && (x.coal === y.coal || x.pts === y.pts);
+function shuffleSegments() {
+  const rand = arr => arr[Math.floor(Math.random() * arr.length)];
+  const tigs = SEGMENTS.filter(s => s.tig), c42 = SEGMENTS.find(s => s.c42);
+  const coa = SEGMENTS.filter(s => s.coal);
+  let seq = null;
+  for (let tries = 0; tries < 5000 && !seq; tries++) {
+    const left = [...coa], chain = [];
+    while (left.length) {
+      const prev = chain.at(-1);
+      const ok = left.filter(s => !prev || !clash(prev, s));
+      if (!ok.length) break;
+      const pick = rand(ok);
+      chain.push(pick);
+      left.splice(left.indexOf(pick), 1);
+    }
+    if (chain.length === coa.length) seq = chain;
+  }
+  // 4 quarts : 8 + 8 + 8 + (6 + la 42) cases ; le quart de la 42 est choisi au hasard.
+  const per = coa.length / tigs.length + 0.5;          // 8
+  const gaps = [];
+  for (let g = 0, i = 0; g < tigs.length; g++) {
+    const n = g === tigs.length - 1 ? seq.length - i : per;
+    gaps.push(seq.slice(i, i + n)); i += n;
+  }
+  const last = gaps.pop();
+  last.splice(Math.floor(Math.random() * (last.length + 1)), 0, c42);
+  gaps.splice(Math.floor(Math.random() * (gaps.length + 1)), 0, last);
+  const order = [];
+  gaps.forEach((g, i) => order.push(tigs[i], ...g));
+  SEGMENTS.splice(0, SEGMENTS.length, ...order);
+
+  const total = SEGMENTS.reduce((t, s) => t + s.size, 0);
+  let acc = 0;
+  SEGMENTS.forEach(s => { s.a0 = acc / total * Math.PI * 2; acc += s.size; s.a1 = acc / total * Math.PI * 2; });
+  // Place la première TIG en haut (nord) : les 4 TIG forment N / E / S / O.
+  const t0 = SEGMENTS[0];
+  angle = -Math.PI / 2 - (t0.a0 + t0.a1) / 2;
+}
+// ============================================================
+
+const canvas = document.getElementById("wheel");
+const ctx = canvas.getContext("2d");
+const spinBtn = document.getElementById("spin");
+const resetBtn = document.getElementById("reset");
+const shuffleBtn = document.getElementById("shuffle");
+const resultEl = document.getElementById("result");
+const historyEl = document.getElementById("history");
+const scoreEls = { tig: document.getElementById("scoreTig") };
+const scoresEl = document.getElementById("scores");
+COAL_KEYS.forEach(k => {
+  const card = document.createElement("div");
+  card.className = "score";
+  card.style.setProperty("--col", COALS[k].color);
+  const label = document.createElement("div");
+  label.className = "label";
+  label.append(dinoImg(k, null, "3rem"));
+  const val = document.createElement("div");
+  val.className = "val";
+  card.append(label, val);
+  scoresEl.insertBefore(card, scoresEl.lastElementChild);
+  scoreEls[k] = val;
+});
+
+const STORE_KEY = "roue-coalition-v1";
+const emptyState = () => ({ ...Object.fromEntries(COAL_KEYS.map(k => [k, 0])), tig: 0, history: [] });
+let state = emptyState();
+try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); if (s) state = { ...state, ...s }; } catch (e) {}
+function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {} }
+
+let angle = 0;
+shuffleSegments();
+let spinning = false;
+
+const fmt = n => (n > 0 ? "+" : "") + n;
+const segLabel = s => s.c42 ? "★ 42 ★" : s.tig ? `🧹 ${s.tig} TIG` : fmt(s.pts);
+const WHEEL_DINOS = {};
+COAL_KEYS.forEach(k => { const im = new Image(); im.onload = () => draw(); im.src = dinoSrc(k); WHEEL_DINOS[k] = im; });
+const segColor = s => s.c42 ? C42_COLOR : s.tig ? TIG_COLORS[0] : COALS[s.coal].color;
+const histColor = s => s.c42 ? "#d4a017" : s.tig ? TIG_COLORS[0] : (COALS[s.coal]?.color ?? "#888");
+
+function draw() {
+  const W = canvas.width, c = W / 2, r = c - 8, k = W / 1120;   // k : échelle
+  ctx.clearRect(0, 0, W, W);
+  SEGMENTS.forEach((s, i) => {
+    const a0 = angle + s.a0, seg = s.a1 - s.a0;
+    ctx.beginPath();
+    ctx.moveTo(c, c);
+    ctx.arc(c, c, r, a0, a0 + seg);
+    ctx.closePath();
+    ctx.fillStyle = segColor(s, i);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.25)";
+    ctx.lineWidth = 2 * k;
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(c, c);
+    ctx.rotate(a0 + seg / 2);
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    const dark = DARK_TEXT.has(segColor(s));
+    ctx.fillStyle = dark ? "#1c1c1c" : "#fff";
+    ctx.shadowColor = dark ? "transparent" : "rgba(0,0,0,.35)";
+    ctx.shadowBlur = 4 * k;
+    ctx.font = `700 ${(s.c42 ? 40 : 34) * k}px system-ui, sans-serif`;
+    if (s.coal) {
+      // dinosaure
+      const im = WHEEL_DINOS[s.coal], br = 46 * k, bx = r - 14 * k - br;
+      ctx.save();
+      ctx.shadowColor = "transparent";
+            if (im.complete && im.naturalWidth) {
+        const iw = br * 1.75, ih = iw * (im.naturalHeight / im.naturalWidth);
+        ctx.drawImage(im, bx - iw / 2, -ih / 2, iw, ih);
+      }
+      ctx.restore();
+      ctx.fillText(segLabel(s), bx - br - 12 * k, 0);
+    } else {
+      ctx.fillText(segLabel(s), r - 20 * k, 0);
+    }
+    ctx.restore();
+  });
+  ctx.beginPath();
+  ctx.arc(c, c, 70 * k, 0, Math.PI * 2);
+  ctx.fillStyle = "#1c1c1c";
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold ${34 * k}px system-ui`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("42", c, c);
+}
+
+function renderScores(bumpKey) {
+  for (const k of COAL_KEYS) {
+    scoreEls[k].textContent = state[k];
+    scoreEls[k].className = "val " + (state[k] > 0 ? "pos" : state[k] < 0 ? "neg" : "");
+  }
+  scoreEls.tig.textContent = state.tig;
+  if (bumpKey) {
+    const el = scoreEls[bumpKey];
+    el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
+  }
+}
+
+function renderHistory() {
+  historyEl.innerHTML = "";
+  state.history.slice(0, 15).forEach(h => {
+    const li = document.createElement("li");
+    li.style.setProperty("--col", histColor(h));
+    const span = document.createElement("span");
+    if (h.coal && COALS[h.coal]) span.append(`${fmt(h.pts)} points pour `, dinoImg(h.coal, null, "1.4rem"));
+    else span.textContent = h.c42 ? "★ 42 ★" : h.tig ? `🧹 ${h.tig} TIG` : "?";
+    const t = document.createElement("time");
+    t.textContent = new Date(h.at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    li.append(span, t);
+    historyEl.appendChild(li);
+  });
+}
+
+function showResult(s) {
+  resultEl.innerHTML = "";
+  const big = document.createElement("div");
+  big.className = "big";
+  const who = document.createElement("div");
+  who.className = "who";
+  if (s.c42) {
+    big.textContent = "★ 42 ★";
+    big.style.color = "#d4a017";
+    who.textContent = "Case spéciale !";
+  } else if (s.tig) {
+    big.textContent = `🧹 ${s.tig} TIG`;
+    who.textContent = s.tig > 1 ? "Aïe… double peine !" : "Au boulot !";
+  } else {
+    big.textContent = s.pts === 0 ? "0 point" : `${fmt(s.pts)} points`;
+    big.className += s.pts > 0 ? " pos" : s.pts < 0 ? " neg" : "";
+    who.append(dinoImg(s.coal, null, "4.5rem"));
+  }
+  resultEl.append(big, who);
+}
+
+function apply(s) {
+  let key;
+  if (s.c42) { /* case spéciale : pas d'effet sur les scores */ }
+  else if (s.tig) { state.tig += s.tig; key = "tig"; }
+  else { state[s.coal] += s.pts; key = s.coal; }
+  const { c42, tig, coal, pts } = s;
+  state.history.unshift({ c42, tig, coal, pts, at: Date.now() });
+  state.history = state.history.slice(0, 50);
+  save();
+  renderScores(key);
+  renderHistory();
+}
+
+function spin() {
+  if (spinning) return;
+  spinning = true;
+  spinBtn.disabled = resetBtn.disabled = shuffleBtn.disabled = true;
+
+  // Tirage pondéré (TIG = TIG_CHANCE au total), la taille des cases suit les poids.
+  let x = Math.random(), winner = SEGMENTS.length - 1;
+  for (let i = 0; i < SEGMENTS.length; i++) { if (SEGMENTS[i].w > 0 && (x -= SEGMENTS[i].w) < 0) { winner = i; break; } }
+  const w = SEGMENTS[winner], seg = w.a1 - w.a0;
+  // Le pointeur est à droite (angle 0) : on amène le segment gagnant dessus.
+  const jitter = (Math.random() - 0.5) * seg * 0.7;
+  const target = -(w.a0 + seg / 2) + jitter;
+  const start = angle;
+  let delta = ((target - start) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+  delta += Math.PI * 2 * (5 + Math.floor(Math.random() * 3));
+  const duration = 4500;
+  const t0 = performance.now();
+
+  function frame(now) {
+    const t = Math.min(1, (now - t0) / duration);
+    angle = start + delta * (1 - Math.pow(1 - t, 4));
+    draw();
+    if (t < 1) return requestAnimationFrame(frame);
+    angle %= Math.PI * 2;
+    spinning = false;
+    spinBtn.disabled = resetBtn.disabled = shuffleBtn.disabled = false;
+    showResult(SEGMENTS[winner]);
+    confettiBurst();
+    apply(SEGMENTS[winner]);
+  }
+  requestAnimationFrame(frame);
+}
+
+// Reset en deux clics (pas de confirm() bloquant)
+let resetArmed = null;
+resetBtn.addEventListener("click", () => {
+  if (spinning) return;
+  if (!resetArmed) {
+    resetBtn.textContent = "Sûr ? Clique encore";
+    resetArmed = setTimeout(() => { resetArmed = null; resetBtn.textContent = "Remettre les scores à zéro"; }, 3000);
+    return;
+  }
+  clearTimeout(resetArmed); resetArmed = null;
+  resetBtn.textContent = "Remettre les scores à zéro";
+  state = emptyState();
+  save();
+  renderScores();
+  renderHistory();
+  resultEl.innerHTML = "<p>Scores remis à zéro. Clique sur « Tourner ! » (ou Espace).</p>";
+});
+spinBtn.addEventListener("click", spin);
+shuffleBtn.addEventListener("click", () => { if (!spinning) { shuffleSegments(); draw(); } });
+document.addEventListener("keydown", e => { if (e.code === "Space") { e.preventDefault(); spin(); } });
+
+// ===== Confettis =====
+const cf = document.getElementById("confetti");
+const cfx = cf.getContext("2d");
+const CONFETTI_COLORS = ["#e53935", "#fb8c00", "#fdd835", "#43a047", "#1e88e5", "#8e24aa", "#ec407a"];
+let parts = [], cfRunning = false;
+function sizeConfetti() {
+  const d = window.devicePixelRatio || 1;
+  cf.width = innerWidth * d; cf.height = innerHeight * d;
+  cfx.setTransform(d, 0, 0, d, 0, 0);
+}
+addEventListener("resize", sizeConfetti);
+sizeConfetti();
+function confettiBurst() {
+  const rect = canvas.getBoundingClientRect();
+  const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+  for (let i = 0; i < 220; i++) {
+    const a = Math.random() * Math.PI * 2, v = 6 + Math.random() * 14;
+    parts.push({
+      x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 6,
+      w: 6 + Math.random() * 8, h: 4 + Math.random() * 6,
+      rot: Math.random() * Math.PI, vr: (Math.random() - .5) * .4,
+      color: CONFETTI_COLORS[i % CONFETTI_COLORS.length], life: 0, max: 110 + Math.random() * 70,
+    });
+  }
+  if (!cfRunning) { cfRunning = true; requestAnimationFrame(confettiFrame); }
+}
+function confettiFrame() {
+  cfx.clearRect(0, 0, innerWidth, innerHeight);
+  parts = parts.filter(p => p.life < p.max && p.y < innerHeight + 40);
+  for (const p of parts) {
+    p.life++; p.vx *= .97; p.vy = p.vy * .97 + .35; p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+    cfx.save();
+    cfx.globalAlpha = Math.min(1, (p.max - p.life) / 40);
+    cfx.translate(p.x, p.y); cfx.rotate(p.rot);
+    cfx.fillStyle = p.color;
+    cfx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.life * .15 + p.rot)));
+    cfx.restore();
+  }
+  if (parts.length) requestAnimationFrame(confettiFrame);
+  else { cfRunning = false; cfx.clearRect(0, 0, innerWidth, innerHeight); }
+}
+
+renderScores();
+renderHistory();
+draw();
+</script>
+</body>
+</html>
