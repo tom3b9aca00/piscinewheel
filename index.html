@@ -88,7 +88,6 @@
 
 <div class="controls">
   <button id="spin">Tourner !</button>
-  <button id="shuffle" class="secondary">🔀 Mélanger</button>
   <button id="reset" class="secondary">Remettre les scores à zéro</button>
 </div>
 
@@ -122,6 +121,7 @@ const TIG_COLORS = ["#222222", "#222222"];
 const C42_COLOR = "#ffffff";
 const DARK_TEXT = new Set(["#ffffff"]);   // couleurs claires -> texte noir
 const TIG_CHANCE = 0.10;      // probabilité totale de tomber sur un TIG (1 sur 10)
+const COOLDOWN_S = 30;        // secondes d'attente entre deux tirages
 const COA_REPEAT = 2;         // chaque case coalition (-50..+50) est présente 2 fois
 
 // Construction de la roue : 30 cases coalition (3 coalitions × 5 valeurs × 2),
@@ -144,7 +144,7 @@ const SEGMENTS = (() => {
   return out;
 })();
 
-// Mélange (à chaque chargement et avec le bouton « Mélanger ») :
+// Mélange (à chaque chargement de la page) :
 //  - les 4 TIG sont placées comme une boussole (N, E, S, O), à 90° l'une de l'autre ;
 //  - entre elles, les cases coalition sont mélangées au hasard, sans jamais mettre
 //    côte à côte deux cases de la même coalition ni deux cases de la même valeur.
@@ -193,7 +193,6 @@ const canvas = document.getElementById("wheel");
 const ctx = canvas.getContext("2d");
 const spinBtn = document.getElementById("spin");
 const resetBtn = document.getElementById("reset");
-const shuffleBtn = document.getElementById("shuffle");
 const resultEl = document.getElementById("result");
 const historyEl = document.getElementById("history");
 const scoreEls = { tig: document.getElementById("scoreTig") };
@@ -212,7 +211,8 @@ COAL_KEYS.forEach(k => {
   scoreEls[k] = val;
 });
 
-const STORE_KEY = "roue-coalition-v1";
+const STORE_KEY = "roue-coalition-v2";
+try { localStorage.removeItem("roue-coalition-v1"); } catch (e) {}
 const emptyState = () => ({ ...Object.fromEntries(COAL_KEYS.map(k => [k, 0])), tig: 0, history: [] });
 let state = emptyState();
 try { const s = JSON.parse(localStorage.getItem(STORE_KEY)); if (s) state = { ...state, ...s }; } catch (e) {}
@@ -342,32 +342,74 @@ function apply(s) {
   renderHistory();
 }
 
+// ===== Attente de 30 s entre deux tirages (gardée même si on recharge la page) =====
+const CD_KEY = "roue-coalition-next-spin";
+let nextSpinAt = 0, cdTimer = null;
+try { nextSpinAt = Number(localStorage.getItem(CD_KEY)) || 0; } catch (e) {}
+function startCooldown() {
+  nextSpinAt = Date.now() + COOLDOWN_S * 1000;
+  try { localStorage.setItem(CD_KEY, String(nextSpinAt)); } catch (e) {}
+  tickCooldown();
+}
+function tickCooldown() {
+  clearTimeout(cdTimer);
+  const left = Math.ceil((nextSpinAt - Date.now()) / 1000);
+  if (left > 0 && left <= COOLDOWN_S) {
+    spinBtn.disabled = true;
+    spinBtn.textContent = `⏳ ${left} s`;
+    cdTimer = setTimeout(tickCooldown, 250);
+  } else {
+    spinBtn.disabled = spinning;
+    spinBtn.textContent = "Tourner !";
+  }
+}
+
 function spin() {
-  if (spinning) return;
+  if (spinning || Date.now() < nextSpinAt) return;
   spinning = true;
-  spinBtn.disabled = resetBtn.disabled = shuffleBtn.disabled = true;
+  spinBtn.disabled = resetBtn.disabled = true;
 
   // Tirage pondéré (TIG = TIG_CHANCE au total), la taille des cases suit les poids.
   let x = Math.random(), winner = SEGMENTS.length - 1;
   for (let i = 0; i < SEGMENTS.length; i++) { if (SEGMENTS[i].w > 0 && (x -= SEGMENTS[i].w) < 0) { winner = i; break; } }
   const w = SEGMENTS[winner], seg = w.a1 - w.a0;
   // Le pointeur est à droite (angle 0) : on amène le segment gagnant dessus.
-  const jitter = (Math.random() - 0.5) * seg * 0.7;
+  const jitter = (Math.random() - 0.5) * seg * 0.85;   // peut s'arrêter tout près du bord
   const target = -(w.a0 + seg / 2) + jitter;
   const start = angle;
   let delta = ((target - start) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
   delta += Math.PI * 2 * (5 + Math.floor(Math.random() * 3));
-  const duration = 4500;
+  // Trois phases : rotation rapide (T1), longue fin au ralenti (T2) où la roue « rampe »
+  // sur les 2–3 dernières cases en dépassant un peu la case finale, puis elle recule (T3)
+  // pour retomber dessus — parfois depuis la case d'après.
+  const T1 = 5000, T2 = 4500, T3 = 1300;
+  const avgSeg = (Math.PI * 2) / SEGMENTS.length;
+  const C = avgSeg * (2 + Math.random() * 1.5);         // distance parcourue au ralenti
+  const O = avgSeg * (0.25 + Math.random() * 0.45);     // dépassement avant le recul
+  const D1 = delta - C;
+  const v1 = 2 * (C + O) / T2;                           // vitesse à la jonction des phases 1 et 2
   const t0 = performance.now();
 
   function frame(now) {
-    const t = Math.min(1, (now - t0) / duration);
-    angle = start + delta * (1 - Math.pow(1 - t, 4));
+    const e = now - t0;
+    if (e < T1) {
+      const u = e / T1;
+      angle = start + v1 * T1 * u + (D1 - v1 * T1) * (1 - Math.pow(1 - u, 3));
+    } else if (e < T1 + T2) {
+      const tau = e - T1;
+      angle = start + D1 + v1 * tau - v1 * tau * tau / (2 * T2);
+    } else {
+      const s = Math.min(1, (e - T1 - T2) / T3);
+      angle = start + delta + O - O * (1 - Math.cos(Math.PI * s)) / 2;   // petit recul
+    }
     draw();
-    if (t < 1) return requestAnimationFrame(frame);
+    if (e < T1 + T2 + T3) return requestAnimationFrame(frame);
+    angle = start + delta;
     angle %= Math.PI * 2;
+    draw();
     spinning = false;
-    spinBtn.disabled = resetBtn.disabled = shuffleBtn.disabled = false;
+    resetBtn.disabled = false;
+    startCooldown();
     showResult(SEGMENTS[winner]);
     confettiBurst();
     apply(SEGMENTS[winner]);
@@ -393,7 +435,6 @@ resetBtn.addEventListener("click", () => {
   resultEl.innerHTML = "<p>Scores remis à zéro. Clique sur « Tourner ! » (ou Espace).</p>";
 });
 spinBtn.addEventListener("click", spin);
-shuffleBtn.addEventListener("click", () => { if (!spinning) { shuffleSegments(); draw(); } });
 document.addEventListener("keydown", e => { if (e.code === "Space") { e.preventDefault(); spin(); } });
 
 // ===== Confettis =====
@@ -441,6 +482,7 @@ function confettiFrame() {
 renderScores();
 renderHistory();
 draw();
+tickCooldown();
 </script>
 </body>
 </html>
